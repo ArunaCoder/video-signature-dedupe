@@ -83,3 +83,6 @@ Thumbs.db
 *.mkv
 *.flv
 *.wmv
+
+# Processes videos
+processed_videos.txt

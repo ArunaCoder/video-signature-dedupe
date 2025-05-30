@@ -10,35 +10,34 @@ import re
 import threading
 import subprocess
 import cv2
-import pythoncom            # PyWin32 COM initializer
-import win32gui             # PyWin32 GUI utilities
-import win32com.client      # PyWin32 COM client
+import pythoncom  # PyWin32 COM initializer
+import win32gui  # PyWin32 GUI utilities
+import win32com.client  # PyWin32 COM client
 from pynput import keyboard
 import tkinter as tk
 from tkinter import messagebox
+from datetime import datetime
 
 # ————— CONFIGURATION —————
-GRID = 4                    # 4×4 grid → 16 sample points
+GRID = 4  # 4×4 grid → 16 sample points
 VIDEO_WIDTH = 1920
 VIDEO_HEIGHT = 1080
-RECORD_FILE = 'processed_videos.txt'
+RECORD_FILE = "processed_videos.txt"
 # regex to parse "2025-05-07_08-22-55 1132 (channel) Title text"
 NAME_PATTERN = re.compile(
-    r'^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\s+'
-    r'(\d+)\s*'
-    r'(?:\([^\)]*\))?\s*'
-    r'(.*)$'
+    r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\s+"
+    r"(\d+)\s*"
+    r"(?:\([^\)]*\))?\s*"
+    r"(.*)$"
 )
 # build the GRID×GRID sample coordinates
 POSITIONS = [
-    (
-        int((i + 1) * VIDEO_WIDTH / (GRID + 1)),
-        int((j + 1) * VIDEO_HEIGHT / (GRID + 1))
-    )
+    (int((i + 1) * VIDEO_WIDTH / (GRID + 1)), int((j + 1) * VIDEO_HEIGHT / (GRID + 1)))
     for j in range(GRID)
     for i in range(GRID)
 ]
 # ————————————————————————
+
 
 def alert_info(title, msg):
     """Caixa de mensagem informativa."""
@@ -47,12 +46,14 @@ def alert_info(title, msg):
     messagebox.showinfo(title, msg)
     root.destroy()
 
+
 def alert_warn(title, msg):
     """Caixa de mensagem de alerta."""
     root = tk.Tk()
     root.withdraw()
     messagebox.showwarning(title, msg)
     root.destroy()
+
 
 def parse_name_parts(filename):
     """Extrai (date_time, code, text) de acordo com o padrão."""
@@ -65,12 +66,13 @@ def parse_name_parts(filename):
         return date_part, code_part, text_part
     return None, None, base
 
+
 def get_selected_file():
     """
     Retorna o único arquivo selecionado no Explorer (Windows) ou Finder (macOS).
     """
     # --- Windows ---
-    if sys.platform.startswith('win'):
+    if sys.platform.startswith("win"):
         # inicializa o COM nesta thread
         pythoncom.CoInitialize()
         try:
@@ -92,18 +94,17 @@ def get_selected_file():
         return None
 
     # --- macOS ---
-    elif sys.platform == 'darwin':
-        applescript = '''
+    elif sys.platform == "darwin":
+        applescript = """
         tell application "Finder"
           set sel to selection as alias list
           if (count sel) > 0 then
             POSIX path of (item 1 of sel)
           end if
         end tell
-        '''
+        """
         proc = subprocess.run(
-            ['osascript', '-e', applescript],
-            capture_output=True, text=True
+            ["osascript", "-e", applescript], capture_output=True, text=True
         )
         path = proc.stdout.strip()
         return path if path else None
@@ -111,6 +112,7 @@ def get_selected_file():
     # --- Outros OS ---
     else:
         return None
+
 
 def process_video(path):
     """Faz todos os checks (nome + cor) e registra o vídeo se for novo."""
@@ -120,39 +122,63 @@ def process_video(path):
     # carrega registros existentes
     records = []
     if os.path.exists(RECORD_FILE):
-        with open(RECORD_FILE, 'r', encoding='utf-8') as f:
+        with open(RECORD_FILE, "r", encoding="utf-8") as f:
             for line in f:
-                rec_fn, rec_key = line.strip().split('|', 1)
-                records.append((rec_fn, rec_key))
+                line = line.strip()
+                if not line:
+                    continue  # ignora linha em branco
+                parts = line.split('|')
+                if len(parts) == 3:
+                    rec_fn, rec_key, rec_date = parts
+                elif len(parts) == 2:
+                    rec_fn, rec_key = parts
+                    rec_date = "data desconhecida"
+                else:
+                    continue  # ignora linha malformada
+
+                records.append((rec_fn, rec_key, rec_date))
+
 
     # 1) filename exato?
-    for rec_fn, _ in records:
+    for rec_fn, _, rec_date in records:
         if rec_fn == fn:
-            alert_warn("Duplicate Filename", f"'{fn}' já está registrado.")
+            alert_warn(
+                "Duplicate Filename",
+                f"Vídeo DUPLICADO\n\n'{fn}' já está registrado.\n\nRegistrado em:  {rec_date}.",
+            )
             return
 
     # 2) date-time?
     if date_cur:
-        for rec_fn, _ in records:
+        for rec_fn, _, rec_date in records:
             date_rec, _, _ = parse_name_parts(rec_fn)
             if date_rec == date_cur:
-                alert_warn("Duplicate Date-Time", f"Date/time '{date_cur}' já usado.")
+                alert_warn(
+                    "Duplicate Date-Time",
+                    f"Vídeo DUPLICADO\n\nDate/time '{date_cur}' já usado.\n\n'{rec_fn}'\n\nRegistrado em: {rec_date}.",
+                )
                 return
 
     # 3) numeric code?
     if code_cur:
-        for rec_fn, _ in records:
+        for rec_fn, _, rec_date in records:
             _, code_rec, _ = parse_name_parts(rec_fn)
             if code_rec == code_cur:
-                alert_warn("Duplicate Code", f"Código '{code_cur}' já usado.")
+                alert_warn(
+                    "Duplicate Code",
+                    f"Vídeo DUPLICADO\n\nCódigo '{code_cur}' já usado.\n\n'{rec_fn}'\n\nRegistrado em: {rec_date}.",
+                )
                 return
 
     # 4) title text?
     if text_cur:
-        for rec_fn, _ in records:
+        for rec_fn, _, rec_date in records:
             _, _, text_rec = parse_name_parts(rec_fn)
             if text_rec and text_rec.lower() == text_cur.lower():
-                alert_warn("Duplicate Title", f"Título '{text_cur}' já usado.")
+                alert_warn(
+                    "Duplicate Title",
+                    f"Vídeo DUPLICADO\n\nTítulo já usado no registro abaixo.\n\n'{rec_fn}'\n\nRegistrado em: {rec_date}.",
+                )
                 return
 
     # 5) captura e amostra cores
@@ -175,16 +201,23 @@ def process_video(path):
     key = ",".join(colors)
 
     # 6) cor duplicada?
-    for _, rec_key in records:
+    for rec_fn, rec_key, rec_date in records:
         if rec_key == key:
-            alert_warn("Duplicate Colors", f"Assinatura de cores já registrada no vídeo '{rec_fn}'.")
+            alert_warn(
+                "Duplicate Colors",
+                f"Vídeo DUPLICADO\n\nAssinatura de cores já registrada.\n\n'{rec_fn}'\n\nRegistrado em: {rec_date}.",
+            )
             return
 
-    # 7) tudo ok → grava registro
-    with open(RECORD_FILE, 'a', encoding='utf-8') as f:
-        f.write(f"{fn}|{key}\n")
+    # 7) tudo ok → grava registro com data atual
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(RECORD_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{fn}|{key}|{now}\n\n")
 
-    alert_info("Done", f"'{fn}' processado e registrado.")
+    alert_info(
+        "Done", f"Vídeo NÃO duplicado\n\n'{fn}' processado e registrado em {now}."
+    )
+
 
 def on_activate():
     """Callback do hotkey."""
@@ -195,9 +228,10 @@ def on_activate():
     # executa processamento em thread separada
     threading.Thread(target=process_video, args=(sel,), daemon=True).start()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # define hotkey cross-platform
-    hotkey = '<cmd>+<shift>+p' if sys.platform=='darwin' else '<ctrl>+<shift>+p'
+    hotkey = "<f7>"
     print(f"Listening for {hotkey} … (select a video in Explorer/Finder and press it)")
     with keyboard.GlobalHotKeys({hotkey: on_activate}) as listener:
         listener.join()
